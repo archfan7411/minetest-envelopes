@@ -1,8 +1,12 @@
+local f = string.format
+
+local has_canonical_name = minetest.get_modpath("canonical_name")
+
 minetest.register_craftitem("envelopes:envelope_blank", {
     description = "Blank Envelope",
     inventory_image = "envelopes_envelope_blank.png",
     on_use = function(itemstack, user, pointed_thing)
-        minetest.show_formspec(user:get_player_name(), "envelopes:input", 
+        minetest.show_formspec(user:get_player_name(), "envelopes:input",
             "size[5.5,5.5]" ..
             "field[2,0.5;3.5,1;addressee;Addressee;]" ..
             "label[0,0;Write a letter]" ..
@@ -19,14 +23,22 @@ minetest.register_craftitem("envelopes:envelope_sealed", {
     stack_max = 1,
     groups = {not_in_creative_inventory = 1},
     on_use = function(itemstack, user, pointed_thing)
-        meta = itemstack:get_meta()
-        if user:get_player_name() == meta:get_string("receiver") then
-            open_env = ItemStack("envelopes:envelope_opened")
-            open_meta = open_env:get_meta()
+        local user_name = user:get_player_name()
+        local meta = itemstack:get_meta()
+        local addressee = meta:get_string("receiver")
+
+        if has_canonical_name then
+            addressee = canonical_name.get(addressee)
+        end
+
+        if user_name == addressee then
+            local open_env = ItemStack("envelopes:envelope_opened")
+            local open_meta = open_env:get_meta()
             open_meta:set_string("sender", meta:get_string("sender"))
             open_meta:set_string("receiver", meta:get_string("receiver"))
             open_meta:set_string("text", meta:get_string("text"))
-            local desc = ("Opened Envelope\nTo: " .. meta:get_string("receiver") .. "\nFrom: " .. meta:get_string("sender"))
+            local desc = ("Opened Envelope\nTo: " .. meta:get_string("receiver") .. "\nFrom: "
+                .. meta:get_string("sender"))
             open_meta:set_string("description", desc)
             if meta:get_string("attn") ~= "" then
                 open_meta:set_string("attn", meta:get_string("attn"))
@@ -34,9 +46,11 @@ minetest.register_craftitem("envelopes:envelope_sealed", {
                 open_meta:set_string("description", desc)
             end
             return open_env
+
+        else
+            minetest.chat_send_player(user_name, f("The seal can only be opened by %s!", addressee))
+            return itemstack
         end
-        minetest.chat_send_player(user:get_player_name(), "The seal can only be opened by the addressee!")
-        return itemstack
     end
 })
 
@@ -51,7 +65,7 @@ minetest.register_craftitem("envelopes:envelope_opened", {
         local receiver = meta:get_string("receiver")
         local text = meta:get_string("text")
         local attn = meta:get_string("attn") or ""
-        local form = 
+        local form =
             "size[5,5]" ..
             "label[0,0;A letter from " .. sender .. " to " .. receiver
         if attn ~= "" then
@@ -67,45 +81,62 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
         return false
     end
 
-    if fields.addressee == "" or fields.addressee == nil or fields.text == "" or fields.text == nil then
-        minetest.chat_send_player(player:get_player_name(), "Please fill out all required fields.")
+    local sender_name = player:get_player_name()
+
+    local addressee = (fields.addressee or ""):trim()
+    local text = (fields.text or ""):trim()
+    local attn = (fields.attn or ""):trim()
+
+    if addressee == "" or text == "" then
+        minetest.chat_send_player(sender_name, "Please fill out all required fields.")
+        return true
+    end
+
+    if has_canonical_name then
+        addressee = canonical_name.get(addressee) or addressee
+    end
+
+    if not minetest.player_exists(addressee) then
+        minetest.chat_send_player(sender_name, f("unknown addressee %q", addressee))
         return true
     end
 
     local inv = player:get_inventory()
-    local letter = ItemStack('envelopes:envelope_sealed')
-    local blank = ItemStack('envelopes:envelope_blank')
+    local letter = ItemStack("envelopes:envelope_sealed")
+    local blank = ItemStack("envelopes:envelope_blank")
     local meta = letter:get_meta()
 
-    meta:set_string("sender", player:get_player_name())
-    meta:set_string("receiver", fields.addressee)
-    meta:set_string("text", fields.text)
+    meta:set_string("sender", sender_name)
+    meta:set_string("receiver", addressee)
+    meta:set_string("text", text)
 
-    local desc = ("Sealed Envelope\nTo: " .. fields.addressee .. "\nFrom: " .. player:get_player_name())
-    meta:set_string("description", desc)
+    local desc = ("Sealed Envelope\nTo: " .. addressee .. "\nFrom: " .. sender_name)
 
-    if fields.attn ~= "" then
-        meta:set_string("attn", fields.attn)
-        desc = desc .. "\nAttn: " .. fields.attn
-        meta:set_string("description", desc)
+    if attn ~= "" then
+        meta:set_string("attn", attn)
+        desc = desc .. "\nAttn: " .. attn
     end
+
+    meta:set_string("description", desc)
 
     if inv:room_for_item("main", letter) and inv:contains_item("main", blank) then
         inv:add_item("main", letter)
         inv:remove_item("main", blank)
     else
-        minetest.chat_send_player(player:get_player_name(), "Unable to create letter! Check your inventory space.")
+        minetest.chat_send_player(sender_name, "Unable to create letter! Check your inventory space.")
     end
 
     return true
 end)
 
-minetest.register_craft({
-    type = "shaped",
-    output = "envelopes:envelope_blank 1",
-    recipe = {
-        {"", "", ""},
-        {"default:paper", "default:paper", "default:paper"},
-        {"default:paper", "default:paper", "default:paper"}
-    }
-})
+if minetest.get_modpath("default") then
+    minetest.register_craft({
+        type = "shaped",
+        output = "envelopes:envelope_blank 1",
+        recipe = {
+            {"", "", ""},
+            {"default:paper", "default:paper", "default:paper"},
+            {"default:paper", "default:paper", "default:paper"}
+        }
+    })
+end
